@@ -50,7 +50,7 @@ async function callAI(messages) {
   try {
     const chatCompletion = await groq.chat.completions.create({
       messages: messages,
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant", // Updated to standard available Groq model
       temperature: 0.7,
       max_tokens: 1024,
     });
@@ -229,7 +229,6 @@ client.on('messageCreate', async (message) => {
 
   } catch (error) {
     console.error('Error generating response:', error);
-    // Silent fallback so it doesn't spam the warning message
   }
 });
 
