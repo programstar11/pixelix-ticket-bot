@@ -38,6 +38,7 @@ const SAFETY_DISCLAIMER = "\n\n🤖 *I’m an automatic discord bot made by Prog
 const ticketMemories = new Map();
 const greetedChannels = new Set();
 const warnedUsers = new Set();
+const claimedTickets = new Set(); // Tracks tickets where staff escalation occurred to stop AI replies
 
 function addToMemory(channelId, role, text) {
   if (!ticketMemories.has(channelId)) {
@@ -76,7 +77,11 @@ client.on('messageCreate', async (message) => {
   const authorId = message.author.id;
   const content = message.content.trim();
 
-  // Send Welcome Guide on first message in ticket channel (without any ban/ticket creation prompts)
+  // If a human staff member was already requested, stop AI from responding in this ticket completely
+  if (claimedTickets.has(channelId)) {
+    return;
+  }
+
   if (!greetedChannels.has(channelId)) {
     greetedChannels.add(channelId);
     
@@ -86,7 +91,7 @@ client.on('messageCreate', async (message) => {
       `📌 **Need human staff assistance? Type any of these exact phrases:**\n` +
       `• \`I require an owner\` — Pings the Server Owner\n` +
       `• \`I require a manager\` — Pings Managers (<@683984183160471552> & @bubbly4life)\n` +
-      `• \`I require staff\` — Pings all staff members (@everyone)\n\n` +
+      `• \`I require staff\` or \`Human Needed\` — Pings all staff members (@everyone)\n\n` +
       `*When you ping staff, I will automatically send them a short recap of our conversation!*` +
       SAFETY_DISCLAIMER;
 
@@ -97,13 +102,15 @@ client.on('messageCreate', async (message) => {
 
   addToMemory(channelId, 'user', `${message.author.username}: ${content}`);
 
-  // Escalation detection
+  // Escalation / Human Needed Detection
   const lowerMsg = content.toLowerCase();
   const isOwnerReq = lowerMsg.includes('i require an owner');
   const isManagerReq = lowerMsg.includes('i require a manager');
-  const isStaffReq = lowerMsg.includes('require staff') || lowerMsg.includes('i require staff') || lowerMsg.includes('need staff');
+  const isStaffReq = lowerMsg.includes('require staff') || lowerMsg.includes('i require staff') || lowerMsg.includes('need staff') || lowerMsg.includes('human needed');
 
   if (isOwnerReq || isManagerReq || isStaffReq) {
+    claimedTickets.add(channelId); // Mark ticket as escalated so bot stops typing in this channel
+
     try {
       await message.channel.sendTyping();
 
@@ -145,7 +152,6 @@ client.on('messageCreate', async (message) => {
 
       const sentMsg = await message.reply(escalationMessage);
 
-      // Stop processing further replies after staff escalation
       setTimeout(async () => {
         try {
           await sentMsg.delete();
@@ -153,10 +159,10 @@ client.on('messageCreate', async (message) => {
       }, 10000);
 
     } catch (e) {}
-    return; // Stops AI from responding once staff is called
+    return; // Exit function so AI does not generate a response
   }
 
-  // Rename channel to green circle ongoing assistant for active AI handling
+  // Rename channel to green circle ongoing assistant when AI is handling it
   if (!message.channel.name.includes('ongoing-assistant') && !message.channel.name.includes('needed')) {
     try {
       await message.channel.setName('🟢-ongoing-assistant');
@@ -186,6 +192,8 @@ client.on('messageCreate', async (message) => {
         await message.reply(warningReply);
         return;
       } else {
+        claimedTickets.add(channelId); // Mark ticket as handed off to staff due to violation
+
         try {
           await message.channel.setName('🟠-staff-needed');
         } catch (e) {}
@@ -206,15 +214,6 @@ client.on('messageCreate', async (message) => {
 
         return;
       }
-    }
-
-    // Dynamic renaming based on the user's ticket query/reason if it's the first few turns
-    if (history.length <= 4 && !message.channel.name.includes('needed')) {
-      let shortSlug = content.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 20);
-      if (shortSlug.length < 3) shortSlug = 'ticket';
-      try {
-        await message.channel.setName(`🟠-${shortSlug}`);
-      } catch (e) {}
     }
 
     addToMemory(channelId, 'model', replyText);
