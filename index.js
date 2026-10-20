@@ -27,7 +27,10 @@ Here are the official Pixelix Community Rules you must enforce and reference whe
 - Follow Discord TOS & Guidelines.
 - Support channel: <#1456406493061447794>
 
-Be helpful, friendly, and concise. If you cannot solve a problem, suggest escalating to staff.
+Be helpful, friendly, and concise. 
+IMPORTANT MODERATION RULE:
+If the user's message contains severe toxicity, racism, hate speech, or explicit rule violations, respond ONLY with:
+"[SAFETY_VIOLATION]"
 `;
 
 const SAFETY_DISCLAIMER = "\n\n🤖 *I’m an automatic discord bot made by ProgramStar I’m not a real human.*";
@@ -43,22 +46,16 @@ function addToMemory(channelId, role, text) {
   ticketMemories.get(channelId).push({ role, text });
 }
 
-async function callGemini(promptText, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: promptText,
-      });
-      return response.text.trim();
-    } catch (error) {
-      const is503 = error.status === 503 || (error.message && error.message.includes('503'));
-      if (is503 && i < retries - 1) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        continue;
-      }
-      throw error;
-    }
+async function callGemini(promptText) {
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: promptText,
+    });
+    return response.text ? response.text.trim() : "";
+  } catch (error) {
+    console.error('Gemini API Error:', error.message);
+    throw error;
   }
 }
 
@@ -69,8 +66,8 @@ client.once(Events.ClientReady, () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // STRICTLY ONLY ALLOW TALKING IN TICKET CHANNELS
-  if (!message.channel.name.startsWith('ticket-') && !message.channel.name.includes('bot-is-doing-it')) {
+  // STRICTLY TICKET CHANNELS ONLY
+  if (!message.channel.name.startsWith('ticket-') && !message.channel.name.includes('bot-is-doing-it') && !message.channel.name.includes('needed')) {
     return;
   }
 
@@ -78,7 +75,7 @@ client.on('messageCreate', async (message) => {
   const authorId = message.author.id;
   const content = message.content.trim();
 
-  // Introduce bot and send guide upon ticket creation (first message)
+  // Send Welcome Guide on first message in ticket channel
   if (!greetedChannels.has(channelId)) {
     greetedChannels.add(channelId);
     
@@ -92,13 +89,17 @@ client.on('messageCreate', async (message) => {
       `*When you ping staff, I will automatically send them a short recap of our conversation!*` +
       SAFETY_DISCLAIMER;
 
-    await message.channel.send(introMessage);
+    try {
+      await message.channel.send(introMessage);
+    } catch (err) {
+      console.error("Failed to send intro message:", err);
+    }
   }
 
   addToMemory(channelId, 'user', `${message.author.username}: ${content}`);
 
-  // Auto-rename channel
-  if (!message.channel.name.includes('bot-is-doing-it')) {
+  // Rename channel to green light if standard interaction
+  if (!message.channel.name.includes('bot-is-doing-it') && !message.channel.name.includes('🟢') && !message.channel.name.includes('needed')) {
     try {
       await message.channel.setName('🟢-bot-is-doing-it');
     } catch (err) {
@@ -113,64 +114,75 @@ client.on('messageCreate', async (message) => {
   const isStaffReq = lowerMsg.includes('require staff') || lowerMsg.includes('i require staff') || lowerMsg.includes('need staff');
 
   if (isOwnerReq || isManagerReq || isStaffReq) {
-    await message.channel.sendTyping();
-
-    const history = ticketMemories.get(channelId) || [];
-    const conversationLog = history.map(h => h.text).join('\n');
-
-    let summaryRecap = "No prior messages recorded.";
     try {
-      summaryRecap = await callGemini(`Summarize the following ticket conversation into a short 2-3 sentence recap for staff members:\n\n${conversationLog}`);
-    } catch (err) {
-      console.error('Error generating summary:', err);
-    }
+      await message.channel.sendTyping();
 
-    let pings = [];
-    if (isOwnerReq) {
-      pings.push('<@1456243008570654751>');
-    }
-    if (isManagerReq) {
-      pings.push('<@683984183160471552>', '@bubbly4life');
-    }
-    if (isStaffReq) {
-      pings.push('@everyone');
-    }
+      const history = ticketMemories.get(channelId) || [];
+      const conversationLog = history.map(h => h.text).join('\n');
 
-    const escalationMessage = 
-      `🚨 **Staff Escalation Requested!**\n` +
-      `**Attention:** ${pings.join(' ')}\n\n` +
-      `📋 **Ticket Summary / Recap:**\n> ${summaryRecap.replace(/\n/g, '\n> ')}` +
-      SAFETY_DISCLAIMER;
-
-    const sentMsg = await message.reply(escalationMessage);
-
-    // Auto-delete escalation ping message after 10 seconds to keep ticket clean
-    setTimeout(async () => {
+      let summaryRecap = "No prior messages recorded.";
       try {
-        await sentMsg.delete();
-      } catch (e) {}
-    }, 10000);
+        summaryRecap = await callGemini(`Summarize the following ticket conversation into a short 2-3 sentence recap for staff members:\n\n${conversationLog}`);
+      } catch (err) {
+        console.error('Error generating summary:', err.message);
+      }
 
+      let pings = [];
+      let newChannelName = '';
+
+      if (isOwnerReq) {
+        pings.push('<@1456243008570654751>');
+        newChannelName = '🔴-owner-needed';
+      } else if (isManagerReq) {
+        pings.push('<@683984183160471552>', '@bubbly4life');
+        newChannelName = '🔴-management-needed';
+      } else if (isStaffReq) {
+        pings.push('@everyone');
+        newChannelName = '🟠-staff-needed';
+      }
+
+      // Rename channel based on escalation level
+      if (newChannelName) {
+        try {
+          await message.channel.setName(newChannelName);
+        } catch (err) {
+          console.error('Failed to rename channel for escalation:', err.message);
+        }
+      }
+
+      const escalationMessage = 
+        `🚨 **Staff Escalation Requested!**\n` +
+        `**Attention:** ${pings.join(' ')}\n\n` +
+        `📋 **Ticket Summary / Recap:**\n> ${summaryRecap.replace(/\n/g, '\n> ')}` +
+        SAFETY_DISCLAIMER;
+
+      const sentMsg = await message.reply(escalationMessage);
+
+      // Auto-delete escalation message after 10 seconds to keep ticket clean
+      setTimeout(async () => {
+        try {
+          await sentMsg.delete();
+        } catch (e) {}
+      }, 10000);
+
+    } catch (e) {
+      console.error("Escalation handling error:", e);
+    }
     return;
   }
 
-  // AI General Answer & Safety Moderation Check
-  await message.channel.sendTyping();
-
+  // Fast Combined AI Answer & Safety Check
   try {
+    await message.channel.sendTyping();
+
     const history = ticketMemories.get(channelId) || [];
     const formattedHistory = history.map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.text}`).join('\n');
 
-    const safetyCheckPrompt = `
-    Analyze the following user input: "${content}"
-    Does this input contain hate speech, racism, severe toxicity, or violations of community rules? 
-    Reply with ONLY ONE WORD: "YES" or "NO".
-    `;
+    const prompt = `${SYSTEM_INSTRUCTION}\n\nPrevious Ticket Conversation:\n${formattedHistory}\n\nPlease respond to the user's latest request.`;
 
-    const safetyCheckText = await callGemini(safetyCheckPrompt);
-    const isViolating = safetyCheckText.toUpperCase().includes('YES');
+    const replyText = await callGemini(prompt);
 
-    if (isViolating) {
+    if (replyText.includes('[SAFETY_VIOLATION]')) {
       if (!warnedUsers.has(authorId)) {
         warnedUsers.add(authorId);
         const warningReply = `Sorry but I cannot answer those questions, if you continue asking me that I will call over a staff member to mute you.` + SAFETY_DISCLAIMER;
@@ -178,19 +190,15 @@ client.on('messageCreate', async (message) => {
         await message.reply(warningReply);
         return;
       } else {
-        const historyLog = ticketMemories.get(channelId) || [];
-        const logText = historyLog.map(h => h.text).join('\n');
-
-        let summaryRecap = "User continued asking inappropriate/racist questions.";
+        // Second violation: rename to staff needed and ping everyone
         try {
-          summaryRecap = await callGemini(`Summarize this inappropriate behavior briefly:\n\n${logText}`);
+          await message.channel.setName('🟠-staff-needed');
         } catch (e) {}
 
         const punishMessage = 
           `🚨 **Staff Escalation - Rule Violation Detected!**\n` +
           `**Attention:** @everyone\n\n` +
-          `📋 **Reason:** User persisted in asking prohibited/racist questions after a warning.\n` +
-          `**Ticket Recap:**\n> ${summaryRecap.replace(/\n/g, '\n> ')}` +
+          `📋 **Reason:** User persisted in asking prohibited/racist questions after a warning.` +
           SAFETY_DISCLAIMER;
 
         const sentPunishMsg = await message.reply(punishMessage);
@@ -205,10 +213,6 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // Normal General Knowledge AI Answer
-    const prompt = `${SYSTEM_INSTRUCTION}\n\nPrevious Ticket Conversation:\n${formattedHistory}\n\nPlease respond to the user's latest request in a friendly, helpful way using your general knowledge.`;
-
-    const replyText = await callGemini(prompt);
     addToMemory(channelId, 'model', replyText);
 
     const fullReply = `${replyText}${SAFETY_DISCLAIMER}`;
@@ -221,7 +225,7 @@ client.on('messageCreate', async (message) => {
 
   } catch (error) {
     console.error('Error generating response:', error);
-    await message.reply(`⚠️ The AI model is currently experiencing heavy traffic. Please try sending your message again in a few seconds, or type \`I require staff\` to call a team member.${SAFETY_DISCLAIMER}`);
+    await message.reply(`⚠️ I'm taking a moment to process. Please send your question again or type \`I require staff\` to call a team member.${SAFETY_DISCLAIMER}`);
   }
 });
 
