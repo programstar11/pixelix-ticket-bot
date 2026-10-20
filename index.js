@@ -14,7 +14,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const SYSTEM_INSTRUCTION = `
 You are an automatic Discord support bot for the Pixelix Minecraft community server.
-You have general knowledge about Minecraft, technical troubleshooting, and general Discord server support.
+You have general knowledge about everything (Minecraft, technical issues, general facts, etc.).
 
 Here are the official Pixelix Community Rules you must enforce and reference when relevant:
 - Respect everyone: No toxicity, hate, racism, or harassment.
@@ -34,6 +34,8 @@ const SAFETY_DISCLAIMER = "🤖 *I’m an automatic discord bot made by ProgramS
 
 const ticketMemories = new Map();
 const greetedChannels = new Set();
+// Tracks users who have already received one warning for rule/racism violations
+const warnedUsers = new Set();
 
 function addToMemory(channelId, role, text) {
   if (!ticketMemories.has(channelId)) {
@@ -54,6 +56,7 @@ client.on('messageCreate', async (message) => {
   }
 
   const channelId = message.channel.id;
+  const authorId = message.author.id;
   const content = message.content.trim();
 
   // Send Welcome Guide on first message in a ticket
@@ -99,7 +102,7 @@ client.on('messageCreate', async (message) => {
     let summaryRecap = "No prior messages recorded.";
     try {
       const summaryResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.8-flash',
         contents: `Summarize the following ticket conversation into a short 2-3 sentence recap for staff members:\n\n${conversationLog}`,
       });
       summaryRecap = summaryResponse.text.trim();
@@ -128,17 +131,66 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // AI Response
+  // AI General Answer & Safety Moderation Check
   await message.channel.sendTyping();
 
   try {
     const history = ticketMemories.get(channelId) || [];
     const formattedHistory = history.map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.text}`).join('\n');
 
-    const prompt = `${SYSTEM_INSTRUCTION}\n\nPrevious Ticket Conversation:\n${formattedHistory}\n\nPlease respond to the user's latest request in a friendly, helpful way.`;
+    // We ask the model to evaluate if the question violates community guidelines (racism, hate speech, severe rule-breaking)
+    const safetyCheckPrompt = `
+    Analyze the following user input: "${content}"
+    Does this input contain hate speech, racism, severe toxicity, or violations of community rules? 
+    Reply with ONLY ONE WORD: "YES" or "NO".
+    `;
+
+    const safetyCheck = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: safetyCheckPrompt,
+    });
+
+    const isViolating = safetyCheck.text.toUpperCase().includes('YES');
+
+    if (isViolating) {
+      if (!warnedUsers.has(authorId)) {
+        // First violation warning
+        warnedUsers.add(authorId);
+        const warningReply = `${SAFETY_DISCLAIMER}\n\nSorry but I cannot answer those questions, if you continue asking me that I will call over a staff member to mute you.`;
+        addToMemory(channelId, 'model', warningReply);
+        await message.reply(warningReply);
+        return;
+      } else {
+        // Second/Continued violation: Ping everyone automatically
+        const historyLog = ticketMemories.get(channelId) || [];
+        const logText = historyLog.map(h => h.text).join('\n');
+
+        let summaryRecap = "User continued asking inappropriate/racist questions.";
+        try {
+          const sumRes = await ai.models.generateContent({
+            model: 'gemini-3.8-flash',
+            contents: `Summarize this inappropriate behavior briefly:\n\n${logText}`,
+          });
+          summaryRecap = sumRes.text.trim();
+        } catch (e) {}
+
+        const punishMessage = 
+          `${SAFETY_DISCLAIMER}\n\n` +
+          `🚨 **Staff Escalation - Rule Violation Detected!**\n` +
+          `**Attention:** @everyone\n\n` +
+          `📋 **Reason:** User persisted in asking prohibited/racist questions after a warning.\n` +
+          `**Ticket Recap:**\n> ${summaryRecap.replace(/\n/g, '\n> ')}`;
+
+        await message.reply(punishMessage);
+        return;
+      }
+    }
+
+    // Normal General Knowledge AI Answer
+    const prompt = `${SYSTEM_INSTRUCTION}\n\nPrevious Ticket Conversation:\n${formattedHistory}\n\nPlease respond to the user's latest request in a friendly, helpful way using your general knowledge.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents: prompt,
     });
 
