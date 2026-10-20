@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, Events } = require('discord.js');
-const { GoogleGenAI } = require('@google/genai');
+const Groq = require('groq-sdk');
 
 const client = new Client({
   intents: [
@@ -10,7 +10,7 @@ const client = new Client({
   ],
 });
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SYSTEM_INSTRUCTION = `
 You are an automatic Discord support bot for the Pixelix Minecraft community server.
@@ -46,15 +46,17 @@ function addToMemory(channelId, role, text) {
   ticketMemories.get(channelId).push({ role, text });
 }
 
-async function callGemini(promptText) {
+async function callAI(messages) {
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: promptText,
+    const chatCompletion = await groq.chat.completions.create({
+      messages: messages,
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.7,
+      max_tokens: 1024,
     });
-    return response.text ? response.text.trim() : "";
+    return chatCompletion.choices[0]?.message?.content?.trim() || "";
   } catch (error) {
-    console.error('Gemini API Error:', error.message);
+    console.error('Groq API Error:', error.message);
     throw error;
   }
 }
@@ -122,7 +124,9 @@ client.on('messageCreate', async (message) => {
 
       let summaryRecap = "No prior messages recorded.";
       try {
-        summaryRecap = await callGemini(`Summarize the following ticket conversation into a short 2-3 sentence recap for staff members:\n\n${conversationLog}`);
+        summaryRecap = await callAI([
+          { role: "user", content: `Summarize the following ticket conversation into a short 2-3 sentence recap for staff members:\n\n${conversationLog}` }
+        ]);
       } catch (err) {
         console.error('Error generating summary:', err.message);
       }
@@ -141,7 +145,6 @@ client.on('messageCreate', async (message) => {
         newChannelName = '🟠-staff-needed';
       }
 
-      // Rename channel based on escalation level
       if (newChannelName) {
         try {
           await message.channel.setName(newChannelName);
@@ -158,7 +161,6 @@ client.on('messageCreate', async (message) => {
 
       const sentMsg = await message.reply(escalationMessage);
 
-      // Auto-delete escalation message after 10 seconds to keep ticket clean
       setTimeout(async () => {
         try {
           await sentMsg.delete();
@@ -171,16 +173,19 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Fast Combined AI Answer & Safety Check
+  // Fast AI Answer & Safety Check
   try {
     await message.channel.sendTyping();
 
     const history = ticketMemories.get(channelId) || [];
     const formattedHistory = history.map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.text}`).join('\n');
 
-    const prompt = `${SYSTEM_INSTRUCTION}\n\nPrevious Ticket Conversation:\n${formattedHistory}\n\nPlease respond to the user's latest request.`;
+    const messages = [
+      { role: "system", content: SYSTEM_INSTRUCTION },
+      { role: "user", content: `Previous Ticket Conversation:\n${formattedHistory}\n\nPlease respond to the user's latest request.` }
+    ];
 
-    const replyText = await callGemini(prompt);
+    const replyText = await callAI(messages);
 
     if (replyText.includes('[SAFETY_VIOLATION]')) {
       if (!warnedUsers.has(authorId)) {
@@ -190,7 +195,6 @@ client.on('messageCreate', async (message) => {
         await message.reply(warningReply);
         return;
       } else {
-        // Second violation: rename to staff needed and ping everyone
         try {
           await message.channel.setName('🟠-staff-needed');
         } catch (e) {}
@@ -225,7 +229,7 @@ client.on('messageCreate', async (message) => {
 
   } catch (error) {
     console.error('Error generating response:', error);
-    await message.reply(`⚠️ I'm taking a moment to process. Please send your question again or type \`I require staff\` to call a team member.${SAFETY_DISCLAIMER}`);
+    // Silent fallback so it doesn't spam the warning message
   }
 });
 
