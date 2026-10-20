@@ -84,12 +84,10 @@ client.on('messageCreate', async (message) => {
   const authorId = message.author.id;
   const content = message.content.trim();
 
-  // If a human staff member was requested or bot handed off, stop AI from replying further
   if (claimedTickets.has(channelId)) {
     return;
   }
 
-  // Welcome Intro Message
   if (!greetedChannels.has(channelId)) {
     greetedChannels.add(channelId);
     
@@ -110,7 +108,6 @@ client.on('messageCreate', async (message) => {
 
   addToMemory(channelId, 'user', `${message.author.username}: ${content}`);
 
-  // Escalation / Human Needed Detection
   const lowerMsg = content.toLowerCase();
   const isOwnerReq = lowerMsg.includes('i require an owner');
   const isManagerReq = lowerMsg.includes('i require a manager');
@@ -158,21 +155,18 @@ client.on('messageCreate', async (message) => {
         `📋 **Ticket Summary / Recap:**\n> ${summaryRecap.replace(/\n/g, '\n> ')}` +
         SAFETY_DISCLAIMER;
 
-      // Sent message is preserved permanently (no auto-delete)
       await message.reply(escalationMessage);
 
     } catch (e) {}
     return;
   }
 
-  // Rename channel to green circle ongoing assistant when AI is active
   if (!message.channel.name.includes('ongoing-assistant') && !message.channel.name.includes('needed')) {
     try {
       await message.channel.setName('🟢-ongoing-assistant');
     } catch (err) {}
   }
 
-  // AI Response Handling
   try {
     await message.channel.sendTyping();
 
@@ -187,7 +181,6 @@ client.on('messageCreate', async (message) => {
     const replyText = await callAI(messages);
     if (!replyText) return;
 
-    // Trigger escalation if bot doesn't know the answer
     if (replyText.toLowerCase().includes("human needed, i don't know the answer") || replyText.toLowerCase().includes("human needed")) {
       claimedTickets.add(channelId);
 
@@ -243,4 +236,4 @@ client.on('messageCreate', async (message) => {
   } catch (error) {}
 });
 
-client.login(process.process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN);
