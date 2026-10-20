@@ -50,7 +50,7 @@ async function callAI(messages) {
   try {
     const chatCompletion = await groq.chat.completions.create({
       messages: messages,
-      model: "openai/gpt-oss-120b", // Active Groq model ID
+      model: "openai/gpt-oss-120b",
       temperature: 0.7,
       max_tokens: 1024,
     });
@@ -68,7 +68,7 @@ client.once(Events.ClientReady, () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  if (!message.channel.name.startsWith('ticket-') && !message.channel.name.includes('bot-is-doing-it') && !message.channel.name.includes('needed')) {
+  if (!message.channel.name.startsWith('ticket-') && !message.channel.name.includes('ongoing-assistant') && !message.channel.name.includes('needed')) {
     return;
   }
 
@@ -76,6 +76,7 @@ client.on('messageCreate', async (message) => {
   const authorId = message.author.id;
   const content = message.content.trim();
 
+  // Send Welcome Guide on first message in ticket channel (without any ban/ticket creation prompts)
   if (!greetedChannels.has(channelId)) {
     greetedChannels.add(channelId);
     
@@ -96,12 +97,7 @@ client.on('messageCreate', async (message) => {
 
   addToMemory(channelId, 'user', `${message.author.username}: ${content}`);
 
-  if (!message.channel.name.includes('bot-is-doing-it') && !message.channel.name.includes('🟢') && !message.channel.name.includes('needed')) {
-    try {
-      await message.channel.setName('🟢-bot-is-doing-it');
-    } catch (err) {}
-  }
-
+  // Escalation detection
   const lowerMsg = content.toLowerCase();
   const isOwnerReq = lowerMsg.includes('i require an owner');
   const isManagerReq = lowerMsg.includes('i require a manager');
@@ -149,6 +145,7 @@ client.on('messageCreate', async (message) => {
 
       const sentMsg = await message.reply(escalationMessage);
 
+      // Stop processing further replies after staff escalation
       setTimeout(async () => {
         try {
           await sentMsg.delete();
@@ -156,9 +153,17 @@ client.on('messageCreate', async (message) => {
       }, 10000);
 
     } catch (e) {}
-    return;
+    return; // Stops AI from responding once staff is called
   }
 
+  // Rename channel to green circle ongoing assistant for active AI handling
+  if (!message.channel.name.includes('ongoing-assistant') && !message.channel.name.includes('needed')) {
+    try {
+      await message.channel.setName('🟢-ongoing-assistant');
+    } catch (err) {}
+  }
+
+  // Fast AI Answer & Safety Check
   try {
     await message.channel.sendTyping();
 
@@ -201,6 +206,15 @@ client.on('messageCreate', async (message) => {
 
         return;
       }
+    }
+
+    // Dynamic renaming based on the user's ticket query/reason if it's the first few turns
+    if (history.length <= 4 && !message.channel.name.includes('needed')) {
+      let shortSlug = content.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 20);
+      if (shortSlug.length < 3) shortSlug = 'ticket';
+      try {
+        await message.channel.setName(`🟠-${shortSlug}`);
+      } catch (e) {}
     }
 
     addToMemory(channelId, 'model', replyText);
