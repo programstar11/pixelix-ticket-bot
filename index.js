@@ -14,9 +14,13 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const SYSTEM_INSTRUCTION = `
 You are an automatic Discord support bot for the Pixelix Minecraft community server.
-You have general knowledge about everything (Minecraft, technical issues, general facts, etc.).
+You have general knowledge about Minecraft, technical issues, and general server support.
 
-Here are the official Pixelix Community Rules you must enforce and reference when relevant:
+Server Connection Info:
+- Java Edition IP: play.pixelix.fun
+- Bedrock Edition IP: play.pixelix.fun (Port: 8199)
+
+Here are the official Pixelix Community Rules you must enforce:
 - Respect everyone: No toxicity, hate, racism, or harassment.
 - No spam or advertising: No spam, links, or self-promo without permission.
 - Use correct channels: Post in the appropriate channels only.
@@ -25,9 +29,12 @@ Here are the official Pixelix Community Rules you must enforce and reference whe
 - Language: Use English only in public or voice channels.
 - No fake proof: No fake screenshots, false reports, or misleading info.
 - Follow Discord TOS & Guidelines.
-- Support channel: <#1456406493061447794>
 
-Be helpful, friendly, and concise. 
+Instructions & Behavior:
+- Do NOT tell users to open a ticket or visit the support channel, as they are ALREADY in a support ticket.
+- Be helpful, friendly, and concise.
+- If you do not know the answer to a question, respond ONLY with: "Human needed, I don't know the answer"
+
 IMPORTANT MODERATION RULE:
 If the user's message contains severe toxicity, racism, hate speech, or explicit rule violations, respond ONLY with:
 "[SAFETY_VIOLATION]"
@@ -38,7 +45,7 @@ const SAFETY_DISCLAIMER = "\n\n🤖 *I’m an automatic discord bot made by Prog
 const ticketMemories = new Map();
 const greetedChannels = new Set();
 const warnedUsers = new Set();
-const claimedTickets = new Set(); // Tracks tickets where staff escalation occurred to stop AI replies
+const claimedTickets = new Set(); // Tracks tickets handed off to staff to stop AI replies
 
 function addToMemory(channelId, role, text) {
   if (!ticketMemories.has(channelId)) {
@@ -77,11 +84,12 @@ client.on('messageCreate', async (message) => {
   const authorId = message.author.id;
   const content = message.content.trim();
 
-  // If a human staff member was already requested, stop AI from responding in this ticket completely
+  // If a human staff member was requested or bot handed off, stop AI from replying further
   if (claimedTickets.has(channelId)) {
     return;
   }
 
+  // Welcome Intro Message
   if (!greetedChannels.has(channelId)) {
     greetedChannels.add(channelId);
     
@@ -90,7 +98,7 @@ client.on('messageCreate', async (message) => {
       `I'm here to answer your questions instantly and help keep everything running smoothly.\n\n` +
       `📌 **Need human staff assistance? Type any of these exact phrases:**\n` +
       `• \`I require an owner\` — Pings the Server Owner\n` +
-      `• \`I require a manager\` — Pings Managers (<@683984183160471552> & @bubbly4life)\n` +
+      `• \`I require a manager\` — Pings Managers (<@683984183160471552> & <@796250562550431795>)\n` +
       `• \`I require staff\` or \`Human Needed\` — Pings all staff members (@everyone)\n\n` +
       `*When you ping staff, I will automatically send them a short recap of our conversation!*` +
       SAFETY_DISCLAIMER;
@@ -109,7 +117,7 @@ client.on('messageCreate', async (message) => {
   const isStaffReq = lowerMsg.includes('require staff') || lowerMsg.includes('i require staff') || lowerMsg.includes('need staff') || lowerMsg.includes('human needed');
 
   if (isOwnerReq || isManagerReq || isStaffReq) {
-    claimedTickets.add(channelId); // Mark ticket as escalated so bot stops typing in this channel
+    claimedTickets.add(channelId);
 
     try {
       await message.channel.sendTyping();
@@ -131,7 +139,7 @@ client.on('messageCreate', async (message) => {
         pings.push('<@1456243008570654751>');
         newChannelName = '🔴-owner-needed';
       } else if (isManagerReq) {
-        pings.push('<@683984183160471552>', '@bubbly4life');
+        pings.push('<@683984183160471552>', '<@796250562550431795>');
         newChannelName = '🔴-management-needed';
       } else if (isStaffReq) {
         pings.push('@everyone');
@@ -150,26 +158,21 @@ client.on('messageCreate', async (message) => {
         `📋 **Ticket Summary / Recap:**\n> ${summaryRecap.replace(/\n/g, '\n> ')}` +
         SAFETY_DISCLAIMER;
 
-      const sentMsg = await message.reply(escalationMessage);
-
-      setTimeout(async () => {
-        try {
-          await sentMsg.delete();
-        } catch (e) {}
-      }, 10000);
+      // Sent message is preserved permanently (no auto-delete)
+      await message.reply(escalationMessage);
 
     } catch (e) {}
-    return; // Exit function so AI does not generate a response
+    return;
   }
 
-  // Rename channel to green circle ongoing assistant when AI is handling it
+  // Rename channel to green circle ongoing assistant when AI is active
   if (!message.channel.name.includes('ongoing-assistant') && !message.channel.name.includes('needed')) {
     try {
       await message.channel.setName('🟢-ongoing-assistant');
     } catch (err) {}
   }
 
-  // Fast AI Answer & Safety Check
+  // AI Response Handling
   try {
     await message.channel.sendTyping();
 
@@ -184,6 +187,24 @@ client.on('messageCreate', async (message) => {
     const replyText = await callAI(messages);
     if (!replyText) return;
 
+    // Trigger escalation if bot doesn't know the answer
+    if (replyText.toLowerCase().includes("human needed, i don't know the answer") || replyText.toLowerCase().includes("human needed")) {
+      claimedTickets.add(channelId);
+
+      try {
+        await message.channel.setName('🟠-staff-needed');
+      } catch (e) {}
+
+      const unknownEscalationMsg = 
+        `🚨 **Staff Escalation Requested!**\n` +
+        `**Attention:** @everyone\n\n` +
+        `📋 **Reason:** I don't know the answer to this question and require human staff assistance.` +
+        SAFETY_DISCLAIMER;
+
+      await message.reply(unknownEscalationMsg);
+      return;
+    }
+
     if (replyText.includes('[SAFETY_VIOLATION]')) {
       if (!warnedUsers.has(authorId)) {
         warnedUsers.add(authorId);
@@ -192,7 +213,7 @@ client.on('messageCreate', async (message) => {
         await message.reply(warningReply);
         return;
       } else {
-        claimedTickets.add(channelId); // Mark ticket as handed off to staff due to violation
+        claimedTickets.add(channelId);
 
         try {
           await message.channel.setName('🟠-staff-needed');
@@ -201,17 +222,10 @@ client.on('messageCreate', async (message) => {
         const punishMessage = 
           `🚨 **Staff Escalation - Rule Violation Detected!**\n` +
           `**Attention:** @everyone\n\n` +
-          `📋 **Reason:** User persisted in asking prohibited/racist questions after a warning.` +
+          `📋 **Reason:** User persisted in asking prohibited questions after a warning.` +
           SAFETY_DISCLAIMER;
 
-        const sentPunishMsg = await message.reply(punishMessage);
-
-        setTimeout(async () => {
-          try {
-            await sentPunishMsg.delete();
-          } catch (e) {}
-        }, 15000);
-
+        await message.reply(punishMessage);
         return;
       }
     }
@@ -229,4 +243,4 @@ client.on('messageCreate', async (message) => {
   } catch (error) {}
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.process.env.DISCORD_TOKEN);
