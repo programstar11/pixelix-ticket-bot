@@ -50,7 +50,7 @@ async function callAI(messages) {
   try {
     const chatCompletion = await groq.chat.completions.create({
       messages: messages,
-      model: "llama3-70b-8192", // Working active Groq model
+      model: "openai/gpt-oss-120b", // Active Groq model ID
       temperature: 0.7,
       max_tokens: 1024,
     });
