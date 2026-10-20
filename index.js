@@ -50,14 +50,14 @@ async function callAI(messages) {
   try {
     const chatCompletion = await groq.chat.completions.create({
       messages: messages,
-      model: "llama-3.1-8b-instant", // Updated to standard available Groq model
+      model: "llama3-70b-8192", // Universally supported Groq model
       temperature: 0.7,
       max_tokens: 1024,
     });
     return chatCompletion.choices[0]?.message?.content?.trim() || "";
   } catch (error) {
     console.error('Groq API Error:', error.message);
-    throw error;
+    return "";
   }
 }
 
@@ -68,7 +68,6 @@ client.once(Events.ClientReady, () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // STRICTLY TICKET CHANNELS ONLY
   if (!message.channel.name.startsWith('ticket-') && !message.channel.name.includes('bot-is-doing-it') && !message.channel.name.includes('needed')) {
     return;
   }
@@ -77,7 +76,6 @@ client.on('messageCreate', async (message) => {
   const authorId = message.author.id;
   const content = message.content.trim();
 
-  // Send Welcome Guide on first message in ticket channel
   if (!greetedChannels.has(channelId)) {
     greetedChannels.add(channelId);
     
@@ -93,23 +91,17 @@ client.on('messageCreate', async (message) => {
 
     try {
       await message.channel.send(introMessage);
-    } catch (err) {
-      console.error("Failed to send intro message:", err);
-    }
+    } catch (err) {}
   }
 
   addToMemory(channelId, 'user', `${message.author.username}: ${content}`);
 
-  // Rename channel to green light if standard interaction
   if (!message.channel.name.includes('bot-is-doing-it') && !message.channel.name.includes('🟢') && !message.channel.name.includes('needed')) {
     try {
       await message.channel.setName('🟢-bot-is-doing-it');
-    } catch (err) {
-      console.error('Failed to rename channel:', err.message);
-    }
+    } catch (err) {}
   }
 
-  // Escalation detection
   const lowerMsg = content.toLowerCase();
   const isOwnerReq = lowerMsg.includes('i require an owner');
   const isManagerReq = lowerMsg.includes('i require a manager');
@@ -127,9 +119,7 @@ client.on('messageCreate', async (message) => {
         summaryRecap = await callAI([
           { role: "user", content: `Summarize the following ticket conversation into a short 2-3 sentence recap for staff members:\n\n${conversationLog}` }
         ]);
-      } catch (err) {
-        console.error('Error generating summary:', err.message);
-      }
+      } catch (err) {}
 
       let pings = [];
       let newChannelName = '';
@@ -148,9 +138,7 @@ client.on('messageCreate', async (message) => {
       if (newChannelName) {
         try {
           await message.channel.setName(newChannelName);
-        } catch (err) {
-          console.error('Failed to rename channel for escalation:', err.message);
-        }
+        } catch (err) {}
       }
 
       const escalationMessage = 
@@ -167,13 +155,10 @@ client.on('messageCreate', async (message) => {
         } catch (e) {}
       }, 10000);
 
-    } catch (e) {
-      console.error("Escalation handling error:", e);
-    }
+    } catch (e) {}
     return;
   }
 
-  // Fast AI Answer & Safety Check
   try {
     await message.channel.sendTyping();
 
@@ -186,6 +171,7 @@ client.on('messageCreate', async (message) => {
     ];
 
     const replyText = await callAI(messages);
+    if (!replyText) return;
 
     if (replyText.includes('[SAFETY_VIOLATION]')) {
       if (!warnedUsers.has(authorId)) {
@@ -227,9 +213,7 @@ client.on('messageCreate', async (message) => {
       await message.reply(fullReply);
     }
 
-  } catch (error) {
-    console.error('Error generating response:', error);
-  }
+  } catch (error) {}
 });
 
 client.login(process.env.DISCORD_TOKEN);
